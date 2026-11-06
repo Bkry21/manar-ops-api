@@ -1,0 +1,171 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  operator
+  technician
+  supervisor
+  production_manager
+  factory_manager
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String
+  active    Boolean  @default(true)
+  units     Unit[]
+  users     User[]
+  productionEntries ProductionEntry[]
+  productionTargets ProductionTarget[]
+  createdAt DateTime @default(now())
+}
+
+model User {
+  id                 String      @id @default(cuid())
+  username           String      @unique
+  passwordHash       String
+  fullName           String
+  role               Role
+  departmentId       String?
+  department         Department? @relation(fields: [departmentId], references: [id])
+  mustChangePassword Boolean     @default(true)
+  active             Boolean     @default(true)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  units                    Unit[]                   @relation("UnitOperators")
+  unitEvents               UnitEvent[]
+  notifications            Notification[]
+  notificationPreferences  NotificationPreference[]
+}
+
+model Unit {
+  id           String      @id
+  name         String
+  photoHint    String
+  departmentId String
+  department   Department  @relation(fields: [departmentId], references: [id])
+  operators    User[]      @relation("UnitOperators")
+  events       UnitEvent[]
+  faults       Fault[]
+  createdAt    DateTime    @default(now())
+}
+
+enum UnitEventType {
+  start
+  stop
+  resume
+  fault_reported
+  fault_resolved
+}
+
+model UnitEvent {
+  id            String        @id @default(cuid())
+  unitId        String
+  unit          Unit          @relation(fields: [unitId], references: [id])
+  type          UnitEventType
+  at            DateTime      @default(now())
+  urgent        Boolean       @default(false)
+  description   String?
+  startPhotoUrl String?
+  faultId       String?
+  reportedById  String?
+  reportedBy    User?         @relation(fields: [reportedById], references: [id])
+  createdAt     DateTime      @default(now())
+}
+
+enum FaultStatus {
+  reported
+  arrival_pending
+  under_repair
+  repair_pending
+  closed
+}
+
+model Fault {
+  id             String      @id @default(cuid())
+  unitId         String
+  unit           Unit        @relation(fields: [unitId], references: [id])
+  urgent         Boolean
+  description    String?
+  status         FaultStatus @default(reported)
+  reportedAt     DateTime    @default(now())
+  reportedByName String
+  closedAt       DateTime?
+  technicians    Json        @default("[]")
+  log            Json        @default("[]")
+  createdAt      DateTime    @default(now())
+  escalationCount Int @default(0)
+}
+
+model ProductionEntry {
+  id            String     @id @default(cuid())
+  departmentId  String
+  department    Department @relation(fields: [departmentId], references: [id])
+  day           String
+  quantities    Json
+  updatedAt     DateTime   @updatedAt
+  updatedByName String?
+  history       Json       @default("[]")
+  createdAt     DateTime   @default(now())
+
+  @@unique([departmentId, day])
+}
+
+model ProductionTarget {
+  id            String     @id @default(cuid())
+  departmentId  String
+  department    Department @relation(fields: [departmentId], references: [id])
+  effectiveFrom String
+  quantities    Json
+  setByName     String
+  setAt         DateTime   @default(now())
+}
+
+model Notification {
+  id     String   @id @default(cuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id])
+  kind   String
+  title  String
+  body   String
+  link   String
+  read   Boolean  @default(false)
+  at     DateTime @default(now())
+
+  @@index([userId, read])
+}
+
+model NotificationPreference {
+  id      String  @id @default(cuid())
+  userId  String
+  user    User    @relation(fields: [userId], references: [id])
+  kind    String
+  enabled Boolean @default(true)
+
+  @@unique([userId, kind])
+}
+
+model SystemSettings {
+  id                      String   @id @default("singleton")
+  shiftStartHour          Int      @default(7)
+  shiftEndHour            Int      @default(17)
+  escalationUrgentMinutes Int      @default(5)
+  escalationNormalMinutes Int      @default(10)
+  updatedAt               DateTime @updatedAt
+}
+
+model ActivityEntry {
+  id        String   @id @default(cuid())
+  kind      String
+  actorName String
+  text      String
+  at        DateTime @default(now())
+
+  @@index([at])
+}
