@@ -17,6 +17,7 @@ import type { StoredLogEntry, StoredTechnician } from './lib/fault-dto'
 import { dayBoundsMs, addDays, eachDay, isDayKey, sudanDayKey } from './domain/sudan-time'
 import { computePerformance } from './lib/production-performance'
 import { canConfirmFault, loadVisibleFault } from './lib/load-fault'
+import { entryDto, saveEntry } from './lib/production-entries'
 import {
   applyUnitAssignment,
   assignOperator,
@@ -31,6 +32,8 @@ import {
   catalog as notificationCatalog,
   runEscalations,
   settingsFor,
+  notify,
+  allManagers,
 } from './lib/notifications'
 import { currentSettings, loadSettingsIntoCache, setCurrentSettings } from './lib/settings-cache'
 import { listActivity, recordActivity, recordLoginFailure } from './lib/activity'
@@ -41,6 +44,11 @@ const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
 })
+
+const saveEntryBodySchema = z.object({
+  quantities: z.record(z.string(), z.number().int().min(0).max(1_000_000)),
+})
+const MAX_ENTRY_AGE_DAYS = 7
 
 const systemSettingsBodySchema = z
   .object({
@@ -1217,6 +1225,62 @@ async function main() {
       return reply.code(403).send({ code: 'forbidden', message: 'هذه الشاشة لمدير المصنع فقط' })
     }
     return listActivity()
+  })
+
+    app.get('/production/entries/:departmentId/:day', async (request, reply) => {
+    const auth = (await request.jwtVerify().catch(() => null)) as { sub: string; role: string } | null
+    if (!auth) return reply.code(401).send({ code: 'unauthorized', message: 'الرجاء تسجيل الدخول' })
+
+    const dbUser = await prisma.user.findUnique({ where: { id: auth.sub } })
+    const { departmentId, day } = request.params as { departmentId: string; day: string }
+    const department = await prisma.department.findUnique({ where: { id: departmentId } })
+    if (!department) return reply.code(404).send({ code: 'department_not_found', message: 'القسم غير موجود' })
+
+    if (!canReadDepartment(auth.role, dbUser?.departmentId ?? null, department.id)) {
+      return reply.code(403).send({ code: 'forbidden', message: 'لا تملك صلاحية على إنتاج هذا القسم' })
+    }
+    if (!isDayKey(day)) return reply.code(400).send({ code: 'invalid_day', message: 'التاريخ غير صحيح' })
+
+    return entryDto(department.id, day)
+  })
+
+  app.put('/production/entries/:departmentId/:day', async (request, reply) => {
+    const auth = (await request.jwtVerify().catch(() => null)) as { sub: string; role: string } | null
+    if (!auth) return reply.code(401).send({ code: 'unauthorized', message: 'الرجاء تسجيل الدخول' })
+
+    const dbUser = await prisma.user.findUnique({ where: { id: auth.sub } })
+    const { departmentId, day } = request.params as { departmentId: string; day: string }
+    const department = await prisma.department.findUnique({ where: { id: departmentId } })
+    if (!department) return reply.code(404).send({ code: 'department_not_found', message: 'القسم غير موجود' })
+
+    const nowMs = Date.now()
+    const today = sudanDayKey(nowMs)
+
+    if (auth.role !== 'supervisor' || dbUser?.departmentId !== department.id) {
+      return reply.code(403).send({ code: 'forbidden', message: 'إدخال الإنتاج لمشرف القسم فقط' })
+    }
+    if (!isDayKey(day) || day > today || day < addDays(today, -MAX_ENTRY_AGE_DAYS)) {
+      return reply.code(400).send({ code: 'invalid_day', message: 'يمكن إدخال الإنتاج لآخر 7 أيام فقط' })
+    }
+
+    const body = saveEntryBodySchema.safeParse(request.body)
+    if (!body.success) return reply.code(400).send({ code: 'invalid_request', message: 'الكميات غير صحيحة' })
+
+    const result = await saveEntry(department.id, day, body.data.quantities, dbUser?.fullName ?? '—', nowMs)
+
+    await notify(
+      await allManagers(),
+      {
+        kind: 'production_added',
+        title: `إدخال إنتاج ${department.name}`,
+        body: `${dbUser?.fullName ?? '—'} أدخل إنتاج يوم ${day}`,
+        link: '/production',
+      },
+      nowMs,
+      auth.sub,
+    )
+
+    return result
   })
 
   const port = Number(process.env.PORT ?? 4000)
