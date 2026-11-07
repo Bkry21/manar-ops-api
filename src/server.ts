@@ -253,7 +253,38 @@ async function main() {
     return computeDayState(unit, events, startEvent?.startPhotoUrl ?? null, nowMs)
   })
 
-  
+    app.get('/units/:unitId/day/:day', async (request, reply) => {
+    const auth = (await request.jwtVerify().catch(() => null)) as { sub: string; role: string } | null
+    if (!auth) return reply.code(401).send({ code: 'unauthorized', message: 'الرجاء تسجيل الدخول' })
+
+    const { unitId, day } = request.params as { unitId: string; day: string }
+    if (!isDayKey(day)) return reply.code(400).send({ code: 'invalid_day', message: 'تاريخ غير صحيح' })
+
+    const unit = await prisma.unit.findUnique({ where: { id: unitId } })
+    if (!unit) return reply.code(404).send({ code: 'unit_not_found', message: 'الوحدة غير موجودة' })
+
+    const dbUser = await prisma.user.findUnique({ where: { id: auth.sub }, include: { units: true } })
+    const readerRoles = ['supervisor', 'production_manager', 'factory_manager']
+    const ownsUnit = auth.role === 'operator' && dbUser?.units.some((u) => u.id === unitId)
+    if (!ownsUnit && !readerRoles.includes(auth.role)) {
+      return reply.code(403).send({ code: 'forbidden', message: 'لا تملك صلاحية على هذه الوحدة' })
+    }
+
+    const { start, end } = dayBoundsMs(day)
+    const events = await prisma.unitEvent.findMany({
+      where: { unitId, at: { gte: new Date(start), lt: new Date(end) } },
+      orderBy: { at: 'asc' },
+    })
+    const startEvent = events.find((event) => event.type === 'start')
+    const nowMs = Date.now()
+    const boundsAnchor = day === sudanDayKey(nowMs) ? nowMs : start
+
+    return {
+      ...computeDayState(unit, events, startEvent?.startPhotoUrl ?? null, boundsAnchor),
+      departmentId: unit.departmentId,
+      segments: buildSegments(events, shiftBounds(boundsAnchor), boundsAnchor),
+    }
+  })
 
   app.post('/units/:unitId/start', async (request, reply) => {
     const auth = (await request.jwtVerify().catch(() => null)) as { sub: string; role: string } | null

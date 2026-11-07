@@ -69,7 +69,7 @@ function findOpenFault(events: PrismaUnitEvent[]) {
     if (event.type === 'fault_resolved') open = null
   }
   if (!open) return null
-  return { id: open.id, urgent: open.urgent, description: open.description, reportedAt: open.at.toISOString() }
+  return { id: open.faultId ?? open.id, urgent: open.urgent, description: open.description, reportedAt: open.at.toISOString() }
 }
 
 export function computeDayState(
