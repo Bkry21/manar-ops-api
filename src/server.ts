@@ -111,7 +111,11 @@ const updateUnitBodySchema = z.object({
 const updateNotificationSettingSchema = z.object({ enabled: z.boolean() })
 
 async function main() {
-  await app.register(cors, { origin: true })
+ await app.register(cors, {
+  origin: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+})
   await app.register(jwt, { secret: process.env.JWT_SECRET! })
 
   app.get('/health', async () => ({ status: 'ok', time: new Date().toISOString() }))
