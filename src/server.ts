@@ -253,6 +253,8 @@ async function main() {
     return computeDayState(unit, events, startEvent?.startPhotoUrl ?? null, nowMs)
   })
 
+  
+
   app.post('/units/:unitId/start', async (request, reply) => {
     const auth = (await request.jwtVerify().catch(() => null)) as { sub: string; role: string } | null
     if (!auth) return reply.code(401).send({ code: 'unauthorized', message: 'الرجاء تسجيل الدخول' })
