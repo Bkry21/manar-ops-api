@@ -60,30 +60,41 @@ export async function normalizeAssignment(
 
 // الوحدة لا يكون لها إلا مشغل واحد: نفرّغها من أي مستخدم تاني قبل ما نربطها بالجديد
 export async function applyUnitAssignment(userId: string, unitIds: string[]): Promise<void> {
-  if (unitIds.length > 0) {
-    await prisma.unit.update({ where: { id: unitIds[0] }, data: { operators: { set: [] } } })
-  }
   await prisma.user.update({
     where: { id: userId },
     data: { units: { set: unitIds.map((id) => ({ id })) } },
   })
 }
+
 export type AssignResult = { ok: true } | { ok: false; code: string; message: string }
 
-// يعيّن مشغلًا للوحدة (أو يفرّغها). ومشغل واحد = وحدة واحدة
 export async function assignOperator(
   unitId: string,
   departmentId: string,
   operatorId: string | null,
 ): Promise<AssignResult> {
-  await prisma.unit.update({ where: { id: unitId }, data: { operators: { set: [] } } })
+  // افصل أي مشغل حالي مرتبط بالوحدة دي
+  const currentOperators = await prisma.user.findMany({
+    where: { role: 'operator', units: { some: { id: unitId } } },
+  })
+  for (const op of currentOperators) {
+    await prisma.user.update({
+      where: { id: op.id },
+      data: { units: { disconnect: { id: unitId } } },
+    })
+  }
 
   if (operatorId) {
     const operator = await prisma.user.findUnique({ where: { id: operatorId } })
     if (!operator || operator.role !== 'operator' || operator.departmentId !== departmentId) {
       return { ok: false, code: 'invalid_operator', message: 'اختر مشغلًا من نفس القسم' }
     }
-    await prisma.user.update({ where: { id: operatorId }, data: { units: { set: [{ id: unitId }] } } })
+    // افصل المشغل من وحدته القديمة وربطه بالجديدة
+    await prisma.user.update({
+      where: { id: operatorId },
+      data: { units: { set: [{ id: unitId }] } },
+    })
   }
+
   return { ok: true }
 }
