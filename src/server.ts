@@ -32,8 +32,11 @@ import {
   catalog as notificationCatalog,
   runEscalations,
   settingsFor,
+  notify,
   allManagers,
-  notify
+  techniciansOf,
+  supervisorsOf,
+  operatorsOf,
 } from './lib/notifications'
 import { currentSettings, loadSettingsIntoCache, setCurrentSettings } from './lib/settings-cache'
 import { listActivity, recordActivity, recordLoginFailure } from './lib/activity'
@@ -408,6 +411,31 @@ async function main() {
       data: { unitId, type: 'fault_reported', at: new Date(nowMs), urgent: body.data.urgent, description, faultId: fault.id },
     })
 
+    const label = body.data.urgent ? 'عطل عاجل' : 'عطل جديد'
+    const faultLink = `/faults/${fault.id}`
+    await notify(
+      await techniciansOf(authz.unit.departmentId),
+      {
+        kind: 'fault_new',
+        title: `${label}: ${authz.unit.name}`,
+        body: description ?? `${reporter?.fullName ?? '—'} أبلغ عن عطل`,
+        link: faultLink,
+      },
+      nowMs,
+      auth.sub,
+    )
+    await notify(
+      [...(await supervisorsOf(authz.unit.departmentId)), ...(await allManagers())],
+      {
+        kind: 'fault_watch',
+        title: `${label}: ${authz.unit.name}`,
+        body: `${reporter?.fullName ?? '—'} أبلغ عن ${label} في ${authz.unit.name}`,
+        link: faultLink,
+      },
+      nowMs,
+      auth.sub,
+    )
+
     const freshEvents = await prisma.unitEvent.findMany({
       where: { unitId, at: { gte: new Date(dayStart), lt: new Date(dayEnd) } },
       orderBy: { at: 'asc' },
@@ -500,6 +528,19 @@ async function main() {
       data: { technicians: updatedTechnicians, log: updatedLog },
       include: { unit: true },
     })
+
+    await notify(
+      [...(await operatorsOf(fault.unitId)), ...(await supervisorsOf(fault.unit.departmentId))],
+      {
+        kind: 'arrival_pending',
+        title: `وصل الفني ${fullName}`,
+        body: `إلى ${fault.unit.name}: أكّد وصوله ليبدأ الصيانة`,
+        link: `/faults/${faultId}`,
+      },
+      nowMs,
+      auth.sub,
+    )
+
     return toFaultDto(updated, nowMs)
   })
 
@@ -547,6 +588,18 @@ async function main() {
       data: { technicians: updatedTechnicians, log: updatedLog },
       include: { unit: true },
     })
+
+    await notify(
+      [{ id: target.userId }],
+      {
+        kind: 'arrival_confirmed',
+        title: `تم تأكيد وصولك إلى ${fault.unit.name}`,
+        body: 'يمكنك بدء الصيانة',
+        link: `/faults/${faultId}`,
+      },
+      nowMs,
+    )
+
     return toFaultDto(updated, nowMs)
   })
 
@@ -587,6 +640,19 @@ async function main() {
       data: { technicians: updatedTechnicians, log: updatedLog },
       include: { unit: true },
     })
+
+    await notify(
+      [...(await operatorsOf(fault.unitId)), ...(await supervisorsOf(fault.unit.departmentId))],
+      {
+        kind: 'repair_pending',
+        title: `أنهى ${fullName} إصلاح ${fault.unit.name}`,
+        body: 'أكّد أن الوحدة أُصلحت فعلًا',
+        link: `/faults/${faultId}`,
+      },
+      nowMs,
+      auth.sub,
+    )
+
     return toFaultDto(updated, nowMs)
   })
 
@@ -636,6 +702,30 @@ async function main() {
       await prisma.unitEvent.create({ data: { unitId: fault.unitId, type: 'fault_resolved', at: new Date(nowMs) } })
     }
 
+    const workedUserIds = technicians.map((item) => item.userId)
+    await notify(
+      workedUserIds.map((id) => ({ id })),
+      {
+        kind: 'repair_confirmed',
+        title: `تم إصلاح ${fault.unit.name}`,
+        body: 'تم تأكيد الإصلاح، شكرًا لك',
+        link: `/faults/${faultId}`,
+      },
+      nowMs,
+      auth.sub,
+    )
+    await notify(
+      await operatorsOf(fault.unitId),
+      {
+        kind: 'repair_confirmed',
+        title: `تم إصلاح ${fault.unit.name}`,
+        body: 'تابع حالة الوحدة',
+        link: `/faults/${faultId}`,
+      },
+      nowMs,
+      auth.sub,
+    )
+
     return toFaultDto(updated, nowMs)
   })
 
@@ -675,6 +765,22 @@ async function main() {
       data: { technicians: updatedTechnicians, log: updatedLog },
       include: { unit: true },
     })
+
+    const workingUserIds = technicians
+      .filter((item) => item.finishedAt !== null)
+      .map((item) => item.userId)
+    await notify(
+      workingUserIds.map((id) => ({ id })),
+      {
+        kind: 'repair_rejected',
+        title: `لم تُصلح ${fault.unit.name}`,
+        body: 'يرجى متابعة الصيانة',
+        link: `/faults/${faultId}`,
+      },
+      nowMs,
+      auth.sub,
+    )
+
     return toFaultDto(updated, nowMs)
   })
 
@@ -827,6 +933,18 @@ async function main() {
         setAt: new Date(nowMs),
       },
     })
+
+    await notify(
+      await supervisorsOf(department.id),
+      {
+        kind: 'target_updated',
+        title: `تحديث هدف ${department.name}`,
+        body: `${dbUser?.fullName ?? '—'} حدّث الهدف اليومي بدءًا من ${body.data.effectiveFrom}`,
+        link: '/production/entry',
+      },
+      nowMs,
+      auth.sub,
+    )
 
     return targetsDto(department.id, nowMs)
   })
