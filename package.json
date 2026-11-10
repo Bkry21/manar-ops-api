@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "contracts:sync": "node scripts/sync-contracts.mjs"
+    "contracts:sync": "node scripts/sync-contracts.mjs",
+    "postinstall": "prisma generate"
   },
   "keywords": [],
   "author": "",
