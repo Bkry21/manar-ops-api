@@ -1,6 +1,7 @@
 import { prisma } from '../db'
 import type { StoredTechnician } from './fault-dto'
 import { currentSettings } from './settings-cache'
+import { sendPush } from './push'
 
 export type NotificationKind =
   | 'fault_new'
@@ -74,7 +75,20 @@ export async function notify(
     })
   }
 
-  if (rows.length > 0) await prisma.notification.createMany({ data: rows })
+  if (rows.length === 0) return
+  await prisma.notification.createMany({ data: rows })
+
+  const devices = await prisma.user.findMany({
+    where: { id: { in: rows.map((row) => row.userId) }, fcmToken: { not: null } },
+    select: { id: true, fcmToken: true },
+  })
+  await Promise.all(
+    devices.map((device) =>
+      sendPush(device.fcmToken!, draft.title, draft.body, draft.link).catch((error) =>
+        console.error('push failed for', device.id, error),
+      ),
+    ),
+  )
 }
 
 export const techniciansOf = (departmentId: string) =>

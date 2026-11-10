@@ -32,8 +32,8 @@ import {
   catalog as notificationCatalog,
   runEscalations,
   settingsFor,
-  notify,
   allManagers,
+  notify
 } from './lib/notifications'
 import { currentSettings, loadSettingsIntoCache, setCurrentSettings } from './lib/settings-cache'
 import { listActivity, recordActivity, recordLoginFailure } from './lib/activity'
@@ -117,6 +117,7 @@ const updateUnitBodySchema = z.object({
 })
 
 const updateNotificationSettingSchema = z.object({ enabled: z.boolean() })
+const deviceTokenBodySchema = z.object({ token: z.string().min(1) })
 
 async function main() {
  await app.register(cors, {
@@ -1281,6 +1282,17 @@ async function main() {
     )
 
     return result
+  })
+
+    app.post('/notifications/device-token', async (request, reply) => {
+    const auth = (await request.jwtVerify().catch(() => null)) as { sub: string; role: string } | null
+    if (!auth) return reply.code(401).send({ code: 'unauthorized', message: 'الرجاء تسجيل الدخول' })
+
+    const body = deviceTokenBodySchema.safeParse(request.body)
+    if (!body.success) return reply.code(400).send({ code: 'invalid_request', message: 'التوكن غير صحيح' })
+
+    await prisma.user.update({ where: { id: auth.sub }, data: { fcmToken: body.data.token } })
+    return { ok: true }
   })
 
   const port = Number(process.env.PORT ?? 4000)
